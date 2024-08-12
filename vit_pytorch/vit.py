@@ -210,8 +210,11 @@ class ViT(nn.Module):
         Forward pass of the Vision Transformer.
 
         Args:
-            img (torch.Tensor): Input image tensor of shape (batch_size, channels, height, width)
-            or (batch_size, height, width) when channels = 1.
+            img (torch.Tensor): Input image tensor with one of the following shapes:
+                - (batch_size, channels, height, width): Standard image input.
+                - (batch_size, height, width): Grayscale image with a single channel.
+                - (batch_size, 257, 256): Spectrogram image with an additional dimension for the DC component.
+                    One dimension will be removed during processing.
             y (torch.Tensor, optional): Ground truth labels for output, of shape (batch_size,). Defaults to None.
 
         Returns:
