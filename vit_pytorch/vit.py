@@ -230,6 +230,10 @@ class ViT(nn.Module):
             The attention_weights list has a length equal to `num_blocks`, with each element having shape
 -           [batch_size, num_heads, seq_len, seq_len].
         """
+        # Spectrogram image with an additional first dimension representing the DC component
+        if img.shape[1:] == (257, 256): # Shape of image: (batch_size, 257, 256)
+            img = img[:,1:]
+
         # Add dummy channel dimension if input is (batch_size, height, width)
         if len(img.shape) == 3:
             img = img.unsqueeze(1)
