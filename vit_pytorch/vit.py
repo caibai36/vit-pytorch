@@ -1,4 +1,9 @@
-# References: https://github.com/lucidrains/vit-pytorch
+# Reference: https://github.com/lucidrains/vit-pytorch
+#
+# Updated by bin-wu on 2024/08/12 at 6:54 AM:
+# - Added comments and docstrings
+# - Implemented returning attention weights
+# - Enhanced the forward method to handle labels, among other improvements
 
 import torch
 from torch import nn
