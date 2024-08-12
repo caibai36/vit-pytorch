@@ -205,7 +205,8 @@ class ViT(nn.Module):
         Forward pass of the Vision Transformer.
 
         Args:
-            img (torch.Tensor): Input image tensor of shape (batch_size, channels, height, width).
+            img (torch.Tensor): Input image tensor of shape (batch_size, channels, height, width)
+            or (batch_size, height, width) when channels = 1.
             y (torch.Tensor, optional): Ground truth labels for output, of shape (batch_size,). Defaults to None.
 
         Returns:
@@ -224,6 +225,10 @@ class ViT(nn.Module):
             The attention_weights list has a length equal to `num_blocks`, with each element having shape
 -           [batch_size, num_heads, seq_len, seq_len].
         """
+        # Add dummy channel dimension if input is (batch_size, height, width)
+        if len(img.shape) == 3:
+            img = img.unsqueeze(1)
+
         x = self.to_patch_embedding(img) # Flatten 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)'
         b, n, _ = x.shape
 
