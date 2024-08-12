@@ -31,6 +31,7 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+
 class Attention(nn.Module):
     """
     Implements multi-head self-attention mechanism.
@@ -38,24 +39,24 @@ class Attention(nn.Module):
     Args:
         dim (int): The input dimension
             Note: The dim shared between the transformer blocks and between attention and feedforward sub-blocks
-            The d_model in transformer terminology would be inner_dim = dim_head * heads
-            (dim => inner_dim => ... => inner_dim => dim)
-            When dim == inner_dim, then standard transformer
+            The d_model (in transformer terminology) would be inner_dim = dim_head * heads
+            The data flow within the transformer follows the pattern: `dim => inner_dim => ... => inner_dim => dim`.
+            When `dim` equals `inner_dim`, the implementation behaves as a standard transformer.
         heads (int): Number of attention heads (default 8)
         dim_head (int): Dimension of each attention head (default 64)
         dropout (float): Dropout probability
-        vis (bool): Whether to visualize attention weights (default False)
+        return_attention (bool): Whether to return attention weights (default False)
 
     Shape:
         - Input: (batch_size, seq_len, dim)
         - Output: (batch_size, seq_len, dim), attention weights (optional)
     """
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0., vis = False):
+    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0., return_attention = False):
         super().__init__()
         inner_dim = dim_head * heads # d_model of transformer
         project_out = not (heads == 1 and dim_head == dim)
 
-        self.vis = vis
+        self.return_attention = return_attention
         self.heads = heads
         self.scale = dim_head ** -0.5
 
@@ -81,7 +82,7 @@ class Attention(nn.Module):
 
         Returns:
             torch.Tensor: Output tensor of shape (batch_size, seq_len, dim)
-            torch.Tensor: Attention weights if vis is True, else None
+            torch.Tensor: Attention weights if return_attention is True, else None
         """
         x = self.norm(x) # pre_norm with shape: b n input_dim
 
@@ -95,39 +96,39 @@ class Attention(nn.Module):
 
         # Apply softmax and masking to get attention weights
         attn = self.attend(dots)
-        weights = attn if self.vis else None
+        attention_weights = attn if self.return_attention else None
         attn = self.dropout(attn)
 
         # Apply attention weights to values and concatenate heads
         out = torch.matmul(attn, v) # b h n n x b h n d -> b h n d
         out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out), weights
+        return self.to_out(out), attention_weights
 
 class Transformer(nn.Module):
     """
     Implements a transformer block with multiple layers of attention and feed-forward networks.
     """
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0., vis = False):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0., return_attention = False):
         super().__init__()
-        self.vis = vis
+        self.return_attention = return_attention
         self.norm = nn.LayerNorm(dim)
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout, vis = vis),
+                Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout, return_attention = return_attention),
                 FeedForward(dim, mlp_dim, dropout = dropout)
             ]))
 
     def forward(self, x):
-        attn_weights = []
+        attention_weights = []
         for attn, ff in self.layers:
             attn_out, weights = attn(x)
             x = attn_out + x  # Attention with residual connection
             x = ff(x) + x    # Feed-forward with residual connection
-            if self.vis:
-                attn_weights.append(weights)
+            if self.return_attention:
+                attention_weights.append(weights)
 
-        return self.norm(x), attn_weights
+        return self.norm(x), attention_weights
 
 class ViT(nn.Module):
     """
@@ -150,10 +151,11 @@ class ViT(nn.Module):
         dim_head (int, optional): Dimension of each attention head. Default is 64. (d_model = dim_head * heads)
         dropout (float, optional): Dropout rate. Default is 0.
         emb_dropout (float, optional): Embedding dropout rate. Default is 0.
-        vis (bool, optional): Whether to visualize attention weights. Default is False.
-            When `vis` is True, the forward pass returns a list of attention weight tensors, with a length equal to `num_blocks`, for visualization;
+        return_attention (bool, optional): Whether to return attention weights. Default is False.
+            When `return_attention` is True, the forward pass returns a list of attention weight tensors,
+            with a length equal to `num_blocks`, for visualization;
             each tensor in the list has the shape [batch_size, num_heads, seq_len, seq_len].
-            If `vis` is False, the forward function returns None for attention weights.
+            If `return_attention` is False, the forward function returns None for attention weights.
 
     Attributes:
         to_patch_embedding (nn.Sequential): Converts image to patch embeddings.
@@ -166,7 +168,7 @@ class ViT(nn.Module):
         mlp_head (nn.Linear): Final classification head.
     """
 
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0., vis = False):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0., return_attention = False):
         super().__init__()
         image_height, image_width = pair(image_size)
         patch_height, patch_width = pair(patch_size)
@@ -177,7 +179,7 @@ class ViT(nn.Module):
         patch_dim = channels * patch_height * patch_width
         assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
 
-        self.vis = vis
+        self.return_attention = return_attention
         self.to_patch_embedding = nn.Sequential(
             Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width), # Flatten
             nn.LayerNorm(patch_dim),
@@ -189,7 +191,7 @@ class ViT(nn.Module):
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
         self.dropout = nn.Dropout(emb_dropout)
 
-        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout, vis)
+        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout, return_attention)
 
         self.pool = pool
         self.to_latent = nn.Identity()
@@ -205,7 +207,7 @@ class ViT(nn.Module):
 
         Returns:
             torch.Tensor: Output tensor of shape (batch_size, num_classes).
-            list or None: A list of attention weight tensors if `vis` is True; otherwise, None.
+            list or None: A list of attention weight tensors if `return_attention` is True; otherwise, None.
                 The list has a length equal to `num_blocks`, with each element having shape
                 [batch_size, num_heads, seq_len, seq_len].
         """
@@ -217,9 +219,9 @@ class ViT(nn.Module):
         x += self.pos_embedding[:, :(n + 1)] # Learnable
         x = self.dropout(x)
 
-        x, attn_weights = self.transformer(x)
+        x, attention_weights = self.transformer(x)
 
         x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
 
         x = self.to_latent(x)
-        return self.mlp_head(x), attn_weights if self.vis else (self.mlp_head(x), None)
+        return self.mlp_head(x), attention_weights if self.return_attention else (self.mlp_head(x), None)
