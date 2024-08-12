@@ -2,6 +2,7 @@
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
@@ -30,7 +31,6 @@ class FeedForward(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-
 
 class Attention(nn.Module):
     """
@@ -156,6 +156,7 @@ class ViT(nn.Module):
             with a length equal to `num_blocks`, for visualization;
             each tensor in the list has the shape [batch_size, num_heads, seq_len, seq_len].
             If `return_attention` is False, the forward function returns None for attention weights.
+        return_logits (bool, optional): Whether to return logits instead of probabilities. Default is False.
 
     Attributes:
         to_patch_embedding (nn.Sequential): Converts image to patch embeddings.
@@ -168,7 +169,7 @@ class ViT(nn.Module):
         mlp_head (nn.Linear): Final classification head.
     """
 
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0., return_attention = False):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0., return_attention = False, return_logits = False):
         super().__init__()
         image_height, image_width = pair(image_size)
         patch_height, patch_width = pair(patch_size)
@@ -180,6 +181,7 @@ class ViT(nn.Module):
         assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
 
         self.return_attention = return_attention
+        self.return_logits = return_logits
         self.to_patch_embedding = nn.Sequential(
             Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width), # Flatten
             nn.LayerNorm(patch_dim),
@@ -198,18 +200,29 @@ class ViT(nn.Module):
 
         self.mlp_head = nn.Linear(dim, num_classes)
 
-    def forward(self, img):
+    def forward(self, img, y=None):
         """
         Forward pass of the Vision Transformer.
 
         Args:
             img (torch.Tensor): Input image tensor of shape (batch_size, channels, height, width).
+            y (torch.Tensor, optional): Ground truth labels for output, of shape (batch_size,). Defaults to None.
 
         Returns:
-            torch.Tensor: Output tensor of shape (batch_size, num_classes).
-            list or None: A list of attention weight tensors if `return_attention` is True; otherwise, None.
-                The list has a length equal to `num_blocks`, with each element having shape
-                [batch_size, num_heads, seq_len, seq_len].
+            If y is provided:
+                tuple: A tuple containing:
+                    - logits or probs (torch.Tensor): Logits if return_logits is True, else probabilities. Shape is (batch_size, num_classes).
+                    - loss (torch.Tensor): The computed loss.
+                    - accuracy (list): A list of accuracies for each sample in the batch.
+                    - attention_weights (list or None): A list of attention weight tensors if return_attention is True, else None.
+            If y is not provided:
+                tuple: A tuple containing:
+                    - logits or probs (torch.Tensor): Logits if return_logits is True, else probabilities. Shape is (batch_size, num_classes).
+                    - attention_weights (list or None): A list of attention weight tensors if return_attention is True, else None.
+
+        Note:
+            The attention_weights list has a length equal to `num_blocks`, with each element having shape
+-           [batch_size, num_heads, seq_len, seq_len].
         """
         x = self.to_patch_embedding(img) # Flatten 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)'
         b, n, _ = x.shape
@@ -224,4 +237,18 @@ class ViT(nn.Module):
         x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
 
         x = self.to_latent(x)
-        return self.mlp_head(x), attention_weights if self.return_attention else (self.mlp_head(x), None)
+        logits = self.mlp_head(x)
+
+        # Determine whether to return logits or probabilities
+        output = logits if self.return_logits else F.softmax(logits, dim=1)
+
+        attention_weights = attention_weights if self.return_attention else None
+
+        if y is not None:
+            y = y.type(torch.LongTensor).to(y.device)
+            loss = F.cross_entropy(logits, y)
+            predicted = logits.argmax(dim=1)
+            accuracy = (predicted == y).float().tolist()
+            return output, loss, accuracy, attention_weights
+        else:
+            return output, attention_weights
